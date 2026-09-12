@@ -4,12 +4,20 @@ from fastapi import (
     WebSocketDisconnect,
     HTTPException
 )
+
 from fastapi.middleware.cors import CORSMiddleware
 from pydantic import BaseModel
+
 from database import measurements, test_connection
+
 from datetime import datetime, timezone
+
 import time
 
+
+# =========================================================
+# APP
+# =========================================================
 
 app = FastAPI(
     title="MHUTEMP Stack 02",
@@ -46,14 +54,16 @@ connected_clients = {}
 
 @app.on_event("startup")
 def startup_event():
+
     test_connection()
 
 
 # =========================================================
-# MODELO LOGIN
+# LOGIN MODEL
 # =========================================================
 
 class LoginRequest(BaseModel):
+
     username: str
     password: str
 
@@ -64,6 +74,7 @@ class LoginRequest(BaseModel):
 
 @app.get("/")
 def root():
+
     return {
         "system": "MHUTEMP",
         "stack": "02",
@@ -84,16 +95,75 @@ def login(data: LoginRequest):
         data.username == "doctor03"
         and data.password == "123456"
     ):
+
         return {
+
             "user": {
-                "username": "doctor03"
+
+                "username": "doctor03",
+
+                "hospital": {
+                    "_id": "stack02-hospital",
+                    "name": "MHUTEMP Stack 02 Test Site"
+                },
+
+                "area": {
+                    "_id": "stack02-area",
+                    "name": "Experimental Monitoring Area"
+                }
+
             },
+
             "token": "stack02-demo-token"
+
         }
+
 
     raise HTTPException(
         status_code=401,
         detail="Invalid credentials"
+    )
+
+
+# =========================================================
+# DEVICE - BLD-prueba
+# =========================================================
+
+@app.get("/api/devices/by-sensor/{username}")
+def get_device_by_sensor(username: str):
+
+    if username == "BLD-prueba":
+
+        return {
+
+            "_id": "stack02-device-001",
+
+            "name": "MHUTEMP Test Node",
+
+            "brand": "MHUTEMP",
+
+            "model": "Stack 02 Experimental Node",
+
+            "serie": "BLD-prueba",
+
+            "assigned_sensor_username": "BLD-prueba",
+
+            "hospital": {
+                "_id": "stack02-hospital",
+                "name": "MHUTEMP Stack 02 Test Site"
+            },
+
+            "area": {
+                "_id": "stack02-area",
+                "name": "Experimental Monitoring Area"
+            }
+
+        }
+
+
+    raise HTTPException(
+        status_code=404,
+        detail="Device not found"
     )
 
 
@@ -104,13 +174,63 @@ def login(data: LoginRequest):
 @app.get("/api/measurements")
 def get_measurements(limit: int = 20):
 
-    limit = min(max(limit, 1), 100)
+    limit = min(
+        max(limit, 1),
+        100
+    )
 
     docs = list(
+
         measurements
-        .find({}, {"_id": 0})
-        .sort("receivedAt", -1)
+        .find(
+            {},
+            {
+                "_id": 0
+            }
+        )
+        .sort(
+            "receivedAt",
+            -1
+        )
         .limit(limit)
+
+    )
+
+    return docs
+
+
+# =========================================================
+# REST - MEDICIONES POR NODO
+# =========================================================
+
+@app.get("/api/measurements/{username}")
+def get_measurements_by_username(
+    username: str,
+    limit: int = 20
+):
+
+    limit = min(
+        max(limit, 1),
+        100
+    )
+
+    docs = list(
+
+        measurements
+        .find(
+            {
+                "username": username
+            },
+            {
+                "_id": 0
+            }
+        )
+        .sort(
+            "receivedAt",
+            -1
+        )
+        .limit(limit)
+
     )
 
     return docs
@@ -121,19 +241,25 @@ def get_measurements(limit: int = 20):
 # =========================================================
 
 @app.websocket("/")
-async def websocket_endpoint(websocket: WebSocket):
+async def websocket_endpoint(
+    websocket: WebSocket
+):
 
     await websocket.accept()
 
     username = None
 
-    print("WebSocket conectado")
+    print(
+        "WebSocket conectado"
+    )
+
 
     try:
 
         while True:
 
             data = await websocket.receive_json()
+
 
             # =================================================
             # PING / PONG
@@ -142,11 +268,18 @@ async def websocket_endpoint(websocket: WebSocket):
             if data.get("type") == "ping":
 
                 await websocket.send_json({
+
                     "type": "pong",
-                    "timestamp": int(time.time() * 1000)
+
+                    "timestamp": int(
+                        time.time() * 1000
+                    )
+
                 })
 
-                print("PING recibido → PONG enviado")
+                print(
+                    "PING recibido → PONG enviado"
+                )
 
                 continue
 
@@ -162,7 +295,9 @@ async def websocket_endpoint(websocket: WebSocket):
 
                 username = data["username"]
 
-                connected_clients[username] = websocket
+                connected_clients[
+                    username
+                ] = websocket
 
                 print(
                     f"Nodo identificado: {username}"
@@ -179,25 +314,62 @@ async def websocket_endpoint(websocket: WebSocket):
 
                 username = data["username"]
 
+
                 document = {
-                    "username": data.get("username"),
-                    "dsTemperature": data.get("dsTemperature"),
-                    "temperature": data.get("temperature"),
-                    "humidity": data.get("humidity"),
-                    "datetime": data.get("datetime"),
-                    "doorStatus": data.get("doorStatus"),
-                    "receivedAt": datetime.now(timezone.utc)
+
+                    "username":
+                        data.get("username"),
+
+                    "dsTemperature":
+                        data.get("dsTemperature"),
+
+                    "temperature":
+                        data.get("temperature"),
+
+                    "humidity":
+                        data.get("humidity"),
+
+                    "datetime":
+                        data.get("datetime"),
+
+                    "doorStatus":
+                        data.get("doorStatus"),
+
+                    "receivedAt":
+                        datetime.now(
+                            timezone.utc
+                        )
+
                 }
 
-                measurements.insert_one(document)
+
+                # =============================================
+                # GUARDAR EN MONGODB
+                # =============================================
+
+                measurements.insert_one(
+                    document
+                )
+
 
                 print(
+
                     f"Medición guardada | "
+
                     f"{username} | "
-                    f"DS: {data.get('dsTemperature')} | "
-                    f"T: {data.get('temperature')} | "
-                    f"H: {data.get('humidity')} | "
-                    f"Door: {data.get('doorStatus')}"
+
+                    f"DS: "
+                    f"{data.get('dsTemperature')} | "
+
+                    f"T: "
+                    f"{data.get('temperature')} | "
+
+                    f"H: "
+                    f"{data.get('humidity')} | "
+
+                    f"Door: "
+                    f"{data.get('doorStatus')}"
+
                 )
 
 
@@ -206,12 +378,25 @@ async def websocket_endpoint(websocket: WebSocket):
                 # =============================================
 
                 broadcast_data = {
-                    "username": document["username"],
-                    "dsTemperature": document["dsTemperature"],
-                    "temperature": document["temperature"],
-                    "humidity": document["humidity"],
-                    "datetime": document["datetime"],
-                    "doorStatus": document["doorStatus"]
+
+                    "username":
+                        document["username"],
+
+                    "dsTemperature":
+                        document["dsTemperature"],
+
+                    "temperature":
+                        document["temperature"],
+
+                    "humidity":
+                        document["humidity"],
+
+                    "datetime":
+                        document["datetime"],
+
+                    "doorStatus":
+                        document["doorStatus"]
+
                 }
 
 
@@ -221,7 +406,11 @@ async def websocket_endpoint(websocket: WebSocket):
 
                 disconnected = []
 
-                for client_name, client_ws in connected_clients.items():
+
+                for (
+                    client_name,
+                    client_ws
+                ) in connected_clients.items():
 
                     try:
 
@@ -244,12 +433,21 @@ async def websocket_endpoint(websocket: WebSocket):
                     )
 
 
+    # =========================================================
+    # DESCONEXIÓN NORMAL
+    # =========================================================
+
     except WebSocketDisconnect:
 
         print(
-            f"WebSocket desconectado: {username}"
+            f"WebSocket desconectado: "
+            f"{username}"
         )
 
+
+    # =========================================================
+    # OTROS ERRORES
+    # =========================================================
 
     except Exception as e:
 
@@ -257,6 +455,10 @@ async def websocket_endpoint(websocket: WebSocket):
             f"Error WebSocket: {e}"
         )
 
+
+    # =========================================================
+    # LIMPIEZA
+    # =========================================================
 
     finally:
 

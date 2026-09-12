@@ -1,20 +1,66 @@
-from fastapi import FastAPI, WebSocket, WebSocketDisconnect
+from fastapi import (
+    FastAPI,
+    WebSocket,
+    WebSocketDisconnect,
+    HTTPException
+)
+from fastapi.middleware.cors import CORSMiddleware
+from pydantic import BaseModel
 from database import measurements, test_connection
 from datetime import datetime, timezone
 import time
+
 
 app = FastAPI(
     title="MHUTEMP Stack 02",
     version="1.0.0"
 )
 
+
+# =========================================================
+# CORS
+# =========================================================
+
+app.add_middleware(
+    CORSMiddleware,
+    allow_origins=[
+        "https://mhutemp-s02-nextjs.netlify.app",
+        "http://localhost:3000"
+    ],
+    allow_credentials=True,
+    allow_methods=["*"],
+    allow_headers=["*"],
+)
+
+
+# =========================================================
+# CLIENTES WEBSOCKET CONECTADOS
+# =========================================================
+
 connected_clients = {}
 
+
+# =========================================================
+# STARTUP
+# =========================================================
 
 @app.on_event("startup")
 def startup_event():
     test_connection()
 
+
+# =========================================================
+# MODELO LOGIN
+# =========================================================
+
+class LoginRequest(BaseModel):
+    username: str
+    password: str
+
+
+# =========================================================
+# ROOT
+# =========================================================
 
 @app.get("/")
 def root():
@@ -26,6 +72,34 @@ def root():
         "status": "running"
     }
 
+
+# =========================================================
+# LOGIN DEMO
+# =========================================================
+
+@app.post("/api/auth/login")
+def login(data: LoginRequest):
+
+    if (
+        data.username == "doctor03"
+        and data.password == "123456"
+    ):
+        return {
+            "user": {
+                "username": "doctor03"
+            },
+            "token": "stack02-demo-token"
+        }
+
+    raise HTTPException(
+        status_code=401,
+        detail="Invalid credentials"
+    )
+
+
+# =========================================================
+# REST - MEDICIONES
+# =========================================================
 
 @app.get("/api/measurements")
 def get_measurements(limit: int = 20):
@@ -42,6 +116,10 @@ def get_measurements(limit: int = 20):
     return docs
 
 
+# =========================================================
+# WEBSOCKET
+# =========================================================
+
 @app.websocket("/")
 async def websocket_endpoint(websocket: WebSocket):
 
@@ -57,9 +135,9 @@ async def websocket_endpoint(websocket: WebSocket):
 
             data = await websocket.receive_json()
 
-            # ======================================
+            # =================================================
             # PING / PONG
-            # ======================================
+            # =================================================
 
             if data.get("type") == "ping":
 
@@ -69,11 +147,13 @@ async def websocket_endpoint(websocket: WebSocket):
                 })
 
                 print("PING recibido → PONG enviado")
+
                 continue
 
-            # ======================================
-            # IDENTIFICACIÓN INICIAL
-            # ======================================
+
+            # =================================================
+            # IDENTIFICACIÓN INICIAL DEL NODO
+            # =================================================
 
             if (
                 "username" in data
@@ -90,9 +170,10 @@ async def websocket_endpoint(websocket: WebSocket):
 
                 continue
 
-            # ======================================
-            # MEDICIÓN
-            # ======================================
+
+            # =================================================
+            # RECEPCIÓN DE MEDICIÓN
+            # =================================================
 
             if "username" in data:
 
@@ -108,7 +189,7 @@ async def websocket_endpoint(websocket: WebSocket):
                     "receivedAt": datetime.now(timezone.utc)
                 }
 
-                result = measurements.insert_one(document)
+                measurements.insert_one(document)
 
                 print(
                     f"Medición guardada | "
@@ -119,8 +200,11 @@ async def websocket_endpoint(websocket: WebSocket):
                     f"Door: {data.get('doorStatus')}"
                 )
 
-                # No enviamos el _id de Mongo porque
-                # ObjectId no es serializable directamente.
+
+                # =============================================
+                # DATOS PARA BROADCAST
+                # =============================================
+
                 broadcast_data = {
                     "username": document["username"],
                     "dsTemperature": document["dsTemperature"],
@@ -130,26 +214,35 @@ async def websocket_endpoint(websocket: WebSocket):
                     "doorStatus": document["doorStatus"]
                 }
 
-                # ==================================
+
+                # =============================================
                 # BROADCAST
-                # ==================================
+                # =============================================
 
                 disconnected = []
 
                 for client_name, client_ws in connected_clients.items():
 
                     try:
+
                         await client_ws.send_json(
                             broadcast_data
                         )
+
                     except Exception:
-                        disconnected.append(client_name)
+
+                        disconnected.append(
+                            client_name
+                        )
+
 
                 for client_name in disconnected:
+
                     connected_clients.pop(
                         client_name,
                         None
                     )
+
 
     except WebSocketDisconnect:
 
@@ -157,15 +250,18 @@ async def websocket_endpoint(websocket: WebSocket):
             f"WebSocket desconectado: {username}"
         )
 
+
     except Exception as e:
 
         print(
             f"Error WebSocket: {e}"
         )
 
+
     finally:
 
         if username:
+
             connected_clients.pop(
                 username,
                 None
